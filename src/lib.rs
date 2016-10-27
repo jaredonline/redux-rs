@@ -1,97 +1,68 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub enum ActionData {
-    Int(usize),
-    Array(Vec<ActionData>),
-    None,
-}
-pub struct Action {
-    name: &'static str,
-    data: ActionData,
-}
-impl Action {
-    fn new(name: &'static str, data: ActionData) -> Action {
-        Action {
-            name: name,
-            data: data,
-        }
-    }
-}
+// state = data store
+// action = object that triggers a change
+// reducer = state + action = new state
+//
+// let reducer = Reducer::new(|| {})
+// let store = Store::new(reducer);
+// let action = Action { name: "FOO", data: ... }
+// store.dispatch(action);
+//
+pub trait Reducer {
+    type Action;
+    type Item;
 
-pub trait State {
-    fn reduce(&self, &Action);
+    fn reduce(&self, Self::Item, Self::Action) -> Self::Item;
+    fn init(&self) -> Self::Item;
 }
 
-pub struct Dispatcher {
-    states: Vec<Box<State>>,
+pub struct Store<T: Clone, A: Clone> {
+    data: Rc<RefCell<T>>,
+    reducer: Box<Reducer<Action = A, Item = T>>,
+    subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
+    is_dispatching: bool,
 }
 
-impl Dispatcher {
-    fn dispatch(&self, action: &Action) {
-        for state in &self.states {
-            state.reduce(action);
-        }
-    }
-}
+impl<T: Clone, A: Clone> Store<T, A> {
+    pub fn new(reducer: Box<Reducer<Action = A, Item = T>>) -> Store<T, A> {
+        let initial_data = Rc::new(RefCell::new(reducer.init()));
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(PartialEq, Debug, Clone)]
-    struct NoState {
-    }
-    impl State for NoState {
-        fn reduce(&self, _: &Action) {
+        Store {
+            data: initial_data,
+            reducer: reducer,
+            subscriptions: Vec::new(),
+            is_dispatching: false,
         }
     }
 
-    #[test]
-    fn it_works() {
-        let state = NoState{};
-        let action = Action::new("no op", ActionData::None);
-        assert_eq!(state, state.reduce(&action));
-    }
-
-    #[derive(PartialEq, Debug, Clone)]
-    struct CounterState {
-        count: usize,
-    }
-    impl State for CounterState {
-        fn reduce(&self, action: &Action) {
-            match action.name {
-                "ADD" => {
-                    match action.data {
-                        ActionData::Int(i) => {
-                            self.count += i;
-                        },
-                        _ => {}
-                    }
-                    state
-                },
-                _ => { }
-            }
+    pub fn dispatch(&self, action: A) -> A {
+        if self.is_dispatching {
+            panic!("Can't dispatch during a reduce.");
         }
-    }
 
-    #[test]
-    fn counter() {
-        let start_state = CounterState {
-            count: 0,
+        let new_data = {
+            let data_clone = self.data.borrow().clone();
+            self.reducer.reduce(data_clone, action.clone())
         };
-        let action = Action::new("ADD", ActionData::Int(1));
-        let end_state = start_state.reduce(&action);
-        let result = CounterState {
-            count: 1,
-        };
-        assert_eq!(end_state, result);
+        {
+            let mut d = self.data.borrow_mut();
+            *d = new_data;
+        }
 
-        let action2 = Action::new("ADD", ActionData::Int(3));
-        let end_state2 = end_state.reduce(&action2);
-        let result2 = CounterState {
-            count: 4,
-        };
-        assert_eq!(end_state2, result2);
+        for cb in &self.subscriptions {
+            cb(&self);
+        }
+
+        action
+    }
+
+    pub fn get_state(&self) -> T {
+        self.data.borrow().clone()
+    }
+
+    pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) {
+        self.subscriptions.push(callback);
     }
 }
