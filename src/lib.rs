@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 // state = data store
 // action = object that triggers a change
@@ -18,15 +17,12 @@ pub trait Reducer {
     fn init(&self) -> Self::Item;
 }
 
-pub struct Store<T: Clone, A: Clone> {
-    internal_store: Rc<RefCell<InternalStore<T>>>,
-    reducer: Box<Reducer<Action = A, Item = T>>,
-    subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
-}
+pub type ReducerBox<T: Clone, A: Clone> = Box<Reducer<Action = A, Item = T>>;
 
-struct InternalStore<T: Clone> {
-    data: T,
-    is_dispatching: bool,
+pub struct Store<T: Clone, A: Clone> {
+    internal_store: Arc<Mutex<InternalStore<T>>>,
+    reducer: ReducerBox<T, A>,
+    subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
 }
 
 impl<T: Clone, A: Clone> Store<T, A> {
@@ -34,7 +30,7 @@ impl<T: Clone, A: Clone> Store<T, A> {
         let initial_data = reducer.init();
 
         Store {
-            internal_store: Rc::new(RefCell::new(InternalStore {
+            internal_store: Arc::new(Mutex::new(InternalStore {
                 data: initial_data,
                 is_dispatching: false,
             })),
@@ -44,19 +40,13 @@ impl<T: Clone, A: Clone> Store<T, A> {
     }
 
     pub fn dispatch(&self, action: A) -> Result<A, String> {
-        let new_data = {
-            let internal_store = self.internal_store.borrow();
-            if self.internal_store.borrow().is_dispatching {
-                return Err(String::from("Can't dispatch during a reduce."));
+        match self.internal_store.try_lock() {
+            Ok(mut guard) => {
+                guard.dispatch(action.clone(), &self.reducer);
+            },
+            Err(e) => {
+                return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
             }
-            self.reducer.reduce(internal_store.data.clone(), action.clone())
-        };
-
-        {
-            let mut d = self.internal_store.borrow_mut();
-            d.is_dispatching = true;
-            d.data = new_data;
-            d.is_dispatching = false;
         }
 
         for cb in &self.subscriptions {
@@ -67,10 +57,30 @@ impl<T: Clone, A: Clone> Store<T, A> {
     }
 
     pub fn get_state(&self) -> T {
-        self.internal_store.borrow().data.clone()
+        self.internal_store.lock().unwrap().data.clone()
     }
 
     pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) {
         self.subscriptions.push(callback);
+    }
+}
+
+struct InternalStore<T: Clone> {
+    data: T,
+    is_dispatching: bool,
+}
+
+impl<T: Clone> InternalStore<T> {
+    fn dispatch<A: Clone>(&mut self, action: A, reducer: &Box<Reducer<Action = A, Item = T>>) -> Result<A, String> {
+        if self.is_dispatching {
+            return Err(String::from("Can't dispatch during a reduce."));
+        }
+
+        let data = self.data.clone();
+        self.is_dispatching = true;
+        self.data = reducer.reduce(data.clone(), action.clone());
+        self.is_dispatching = false;
+
+        Ok(action)
     }
 }

@@ -4,6 +4,7 @@ use redux::{Reducer, Store};
 
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
+use std::{thread, time};
 
 #[derive(Clone)]
 struct Todo {
@@ -107,3 +108,19 @@ fn dispatch_from_a_listener() {
     let _ = store.dispatch(action);
     assert_eq!(2, store.get_state().len());
 }
+
+//#[test]
+//fn multi_threaded_use() {
+    //let reducer = Box::new(TodoReducer {});
+    //let mut store = Arc::new(Store::new(reducer));
+    //store.subscribe(Box::new(move |store| {
+        //thread::sleep(time::Duration::from_secs(3))
+    //}));
+    //let s = store.clone();
+    //thread::spawn(move || {
+        //let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+        //let _ = s.dispatch(action);
+    //});
+    
+    //assert_eq!(2, store.get_state().len());
+//}
