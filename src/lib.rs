@@ -19,47 +19,55 @@ pub trait Reducer {
 }
 
 pub struct Store<T: Clone, A: Clone> {
-    data: Rc<RefCell<T>>,
+    internal_store: Rc<RefCell<InternalStore<T>>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
     subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
+}
+
+struct InternalStore<T: Clone> {
+    data: T,
     is_dispatching: bool,
 }
 
 impl<T: Clone, A: Clone> Store<T, A> {
     pub fn new(reducer: Box<Reducer<Action = A, Item = T>>) -> Store<T, A> {
-        let initial_data = Rc::new(RefCell::new(reducer.init()));
+        let initial_data = reducer.init();
 
         Store {
-            data: initial_data,
+            internal_store: Rc::new(RefCell::new(InternalStore {
+                data: initial_data,
+                is_dispatching: false,
+            })),
             reducer: reducer,
             subscriptions: Vec::new(),
-            is_dispatching: false,
         }
     }
 
-    pub fn dispatch(&self, action: A) -> A {
-        if self.is_dispatching {
-            panic!("Can't dispatch during a reduce.");
-        }
-
+    pub fn dispatch(&self, action: A) -> Result<A, String> {
         let new_data = {
-            let data_clone = self.data.borrow().clone();
-            self.reducer.reduce(data_clone, action.clone())
+            let internal_store = self.internal_store.borrow();
+            if self.internal_store.borrow().is_dispatching {
+                return Err(String::from("Can't dispatch during a reduce."));
+            }
+            self.reducer.reduce(internal_store.data.clone(), action.clone())
         };
+
         {
-            let mut d = self.data.borrow_mut();
-            *d = new_data;
+            let mut d = self.internal_store.borrow_mut();
+            d.is_dispatching = true;
+            d.data = new_data;
+            d.is_dispatching = false;
         }
 
         for cb in &self.subscriptions {
             cb(&self);
         }
 
-        action
+        Ok(action)
     }
 
     pub fn get_state(&self) -> T {
-        self.data.borrow().clone()
+        self.internal_store.borrow().data.clone()
     }
 
     pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) {

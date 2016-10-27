@@ -81,14 +81,13 @@ fn todo_list() {
     let reducer = Box::new(TodoReducer {});
     let mut store = Store::new(reducer);
     let pbacker = pingbacker.clone();
-    store.subscribe(Box::new(move |store| {
+    store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
-        let _ = store.get_state();
         pingbacker.counter += 1;
     }));
     
     let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
-    store.dispatch(action);
+    let _ = store.dispatch(action);
     assert_eq!(1, store.get_state().len());
     assert_eq!(1, pbacker.lock().unwrap().counter);
 }
@@ -100,11 +99,11 @@ fn dispatch_from_a_listener() {
     store.subscribe(Box::new(move |store| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
-            store.dispatch(action);
+            let _ = store.dispatch(action);
         }
     }));
     
     let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
-    store.dispatch(action);
+    let _ = store.dispatch(action);
     assert_eq!(2, store.get_state().len());
 }
