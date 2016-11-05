@@ -1,14 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-// state = data store
-// action = object that triggers a change
-// reducer = state + action = new state
-//
-// let reducer = Reducer::new(|| {})
-// let store = Store::new(reducer);
-// let action = Action { name: "FOO", data: ... }
-// store.dispatch(action);
-//
 pub trait Reducer {
     type Action;
     type Item;
@@ -17,11 +8,9 @@ pub trait Reducer {
     fn init(&self) -> Self::Item;
 }
 
-pub type ReducerBox<T: Clone, A: Clone> = Box<Reducer<Action = A, Item = T>>;
-
 pub struct Store<T: Clone, A: Clone> {
     internal_store: Arc<Mutex<InternalStore<T>>>,
-    reducer: ReducerBox<T, A>,
+    reducer: Box<Reducer<Action = A, Item = T>>,
     subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
 }
 
@@ -45,9 +34,9 @@ impl<T: Clone, A: Clone> Store<T, A> {
     pub fn dispatch(&self, action: A) -> Result<A, String> {
         match self.internal_store.try_lock() {
             Ok(mut guard) => {
-                guard.dispatch(action.clone(), &self.reducer);
+                let _ = guard.dispatch(action.clone(), &self.reducer);
             },
-            Err(e) => {
+            Err(_) => {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
             }
         }
