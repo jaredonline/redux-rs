@@ -25,6 +25,9 @@ pub struct Store<T: Clone, A: Clone> {
     subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
 }
 
+unsafe impl<T: Clone, A: Clone> Send for Store<T, A> {}
+unsafe impl<T: Clone, A: Clone> Sync for Store<T, A> {}
+
 impl<T: Clone, A: Clone> Store<T, A> {
     pub fn new(reducer: Box<Reducer<Action = A, Item = T>>) -> Store<T, A> {
         let initial_data = reducer.init();
