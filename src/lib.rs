@@ -9,7 +9,7 @@ pub trait Reducer {
 }
 
 pub struct Store<T: Clone, A: Clone> {
-    internal_store: Arc<Mutex<InternalStore<T>>>,
+    internal_store: Mutex<InternalStore<T>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
     subscriptions: Vec<Arc<Subscription<T, A>>>,
 }
@@ -22,10 +22,10 @@ impl<T: Clone, A: Clone> Store<T, A> {
         let initial_data = reducer.init();
 
         Store {
-            internal_store: Arc::new(Mutex::new(InternalStore {
+            internal_store: Mutex::new(InternalStore {
                 data: initial_data,
                 is_dispatching: false,
-            })),
+            }),
             reducer: reducer,
             subscriptions: Vec::new(),
         }
