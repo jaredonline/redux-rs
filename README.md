@@ -4,7 +4,7 @@ An attempt at a uni-directional state flow written in Rust, heavily based in [re
 
 ## Usage
 
-Here's a simple example of using a store and reducer to make a quick Todo list (you can run this by running `cargo run --example simple` or view the code [here]()).
+Here's a simple example of using a store and reducer to make a quick Todo list (you can run this by running `cargo run --example simple` or view the code [here](https://github.com/jaredonline/redux-rs/blob/master/examples/simple.rs)).
 
 ```rust
 extern crate redux;
