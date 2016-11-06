@@ -1,6 +1,6 @@
 extern crate redux;
 
-use redux::{Reducer, Store};
+use redux::{Reducer, Store, Middleware};
 
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
@@ -80,7 +80,7 @@ fn todo_list() {
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer);
+    let mut store = Store::new(reducer, vec![]);
     let pbacker = pingbacker.clone();
     store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -96,7 +96,7 @@ fn todo_list() {
 #[test]
 fn dispatch_from_a_listener() {
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer);
+    let mut store = Store::new(reducer, vec![]);
     store.subscribe(Box::new(move |store| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
@@ -112,7 +112,7 @@ fn dispatch_from_a_listener() {
 #[test]
 fn multi_threaded_use() {
     let reducer = Box::new(TodoReducer {});
-    let mut store = Arc::new(Store::new(reducer));
+    let mut store = Arc::new(Store::new(reducer, vec![]));
     {
         let mut store = Arc::get_mut(&mut store).unwrap();
         store.subscribe(Box::new(|s| {
@@ -141,7 +141,7 @@ fn cancel_subscription() {
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer);
+    let mut store = Store::new(reducer, vec![]);
     let pbacker = pingbacker.clone();
     let subscription = store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -158,4 +158,42 @@ fn cancel_subscription() {
     let _ = store.dispatch(action2);
     assert_eq!(2, store.get_state().len());
     assert_eq!(1, pbacker.lock().unwrap().counter);
+}
+
+struct Counter {
+    before_count: Arc<Mutex<usize>>,
+    after_count: Arc<Mutex<usize>>,
+}
+impl Counter {
+    fn new(before_count: Arc<Mutex<usize>>, after_count: Arc<Mutex<usize>>) -> Counter {
+        Counter {
+            before_count: before_count,
+            after_count: after_count,
+        }
+    }
+}
+impl Middleware<TodoStore, TodoAction> for Counter {
+    fn before(&self, _: &Store<TodoStore, TodoAction>, _: TodoAction) {
+        let mut count = self.before_count.lock().unwrap();
+        *count += 1;
+    }
+
+    fn after(&self, _: &Store<TodoStore, TodoAction>, _: TodoAction) {
+        let mut count = self.after_count.lock().unwrap();
+        *count += 2;
+    }
+}
+
+#[test]
+fn middleware() {
+    let before_count = Arc::new(Mutex::new(0));
+    let after_count = Arc::new(Mutex::new(0));
+    let counter = Box::new(Counter::new(before_count.clone(), after_count.clone()));
+    let reducer = Box::new(TodoReducer {});
+    let mut store = Store::new(reducer, vec![counter]);
+    let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+    let _ = store.dispatch(action);
+    assert_eq!(1, store.get_state().len());
+    assert_eq!(1, *before_count.lock().unwrap());
+    assert_eq!(2, *after_count.lock().unwrap());
 }

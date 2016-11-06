@@ -8,17 +8,23 @@ pub trait Reducer {
     fn init(&self) -> Self::Item;
 }
 
+pub trait Middleware<T: Clone, A: Clone> {
+    fn before(&self, store: &Store<T, A>, action: A);
+    fn after(&self, store: &Store<T, A>, action: A);
+}
+
 pub struct Store<T: Clone, A: Clone> {
     internal_store: Mutex<InternalStore<T>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
     subscriptions: Vec<Arc<Subscription<T, A>>>,
+    middlewares: Vec<Box<Middleware<T, A>>>,
 }
 
 unsafe impl<T: Clone, A: Clone> Send for Store<T, A> {}
 unsafe impl<T: Clone, A: Clone> Sync for Store<T, A> {}
 
 impl<T: Clone, A: Clone> Store<T, A> {
-    pub fn new(reducer: Box<Reducer<Action = A, Item = T>>) -> Store<T, A> {
+    pub fn new(reducer: Box<Reducer<Action = A, Item = T>>, middlewares: Vec<Box<Middleware<T, A>>>) -> Store<T, A> {
         let initial_data = reducer.init();
 
         Store {
@@ -28,10 +34,14 @@ impl<T: Clone, A: Clone> Store<T, A> {
             }),
             reducer: reducer,
             subscriptions: Vec::new(),
+            middlewares: middlewares,
         }
     }
 
     pub fn dispatch(&self, action: A) -> Result<A, String> {
+        for middleware in &self.middlewares {
+            middleware.before(&self, action.clone());
+        }
         match self.internal_store.try_lock() {
             Ok(mut guard) => {
                 let _ = guard.dispatch(action.clone(), &self.reducer);
@@ -39,6 +49,9 @@ impl<T: Clone, A: Clone> Store<T, A> {
             Err(_) => {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
             }
+        }
+        for middleware in &self.middlewares {
+            middleware.after(&self, action.clone());
         }
 
         for subscription in &self.subscriptions {
