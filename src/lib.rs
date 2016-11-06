@@ -11,7 +11,7 @@ pub trait Reducer {
 pub struct Store<T: Clone, A: Clone> {
     internal_store: Arc<Mutex<InternalStore<T>>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
-    subscriptions: Vec<Box<Fn(&Store<T, A>)>>,
+    subscriptions: Vec<Arc<Subscription<T, A>>>,
 }
 
 unsafe impl<T: Clone, A: Clone> Send for Store<T, A> {}
@@ -41,8 +41,14 @@ impl<T: Clone, A: Clone> Store<T, A> {
             }
         }
 
-        for cb in &self.subscriptions {
-            cb(&self);
+        for subscription in &self.subscriptions {
+            let active = {
+                *subscription.active.lock().unwrap()
+            };
+            if active {
+                let ref cb = subscription.callback;
+                cb(&self);
+            }
         }
 
         Ok(action)
@@ -52,8 +58,10 @@ impl<T: Clone, A: Clone> Store<T, A> {
         self.internal_store.lock().unwrap().data.clone()
     }
 
-    pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) {
-        self.subscriptions.push(callback);
+    pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) -> Arc<Subscription<T, A>> {
+        let subscription = Arc::new(Subscription::new(callback));
+        self.subscriptions.push(subscription.clone());
+        return subscription;
     }
 }
 
@@ -74,5 +82,26 @@ impl<T: Clone> InternalStore<T> {
         self.is_dispatching = false;
 
         Ok(action)
+    }
+}
+
+type SubscriptionFunc<T: Clone, A: Clone> = Box<Fn(&Store<T, A>)>;
+
+pub struct Subscription<T: Clone, A: Clone> {
+    callback: SubscriptionFunc<T, A>,
+    active: Mutex<bool>,
+}
+
+impl<T: Clone, A: Clone> Subscription<T, A> {
+    pub fn new(callback: SubscriptionFunc<T, A>) -> Subscription<T, A> {
+        Subscription {
+            callback: callback,
+            active: Mutex::new(true),
+        }
+    }
+
+    pub fn cancel(&self) {
+        let mut active = self.active.lock().unwrap();
+        *active = false;
     }
 }

@@ -132,3 +132,30 @@ fn multi_threaded_use() {
     
     assert_eq!(2, store.get_state().len());
 }
+
+#[test]
+fn cancel_subscription() {
+    struct PingbackTester {
+        counter: usize
+    }
+    let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
+
+    let reducer = Box::new(TodoReducer {});
+    let mut store = Store::new(reducer);
+    let pbacker = pingbacker.clone();
+    let subscription = store.subscribe(Box::new(move |_| {
+        let mut pingbacker = pingbacker.lock().unwrap();
+        pingbacker.counter += 1;
+    }));
+    
+    let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+    let _ = store.dispatch(action);
+    assert_eq!(1, store.get_state().len());
+    assert_eq!(1, pbacker.lock().unwrap().counter);
+
+    subscription.cancel();
+    let action2 = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+    let _ = store.dispatch(action2);
+    assert_eq!(2, store.get_state().len());
+    assert_eq!(1, pbacker.lock().unwrap().counter);
+}
