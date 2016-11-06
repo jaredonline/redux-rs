@@ -7,6 +7,11 @@ use std::sync::{Mutex, Arc};
 use std::{thread, time};
 
 #[derive(Clone)]
+enum TodoAction {
+    NewTodo { name: String }
+}
+
+#[derive(Clone)]
 struct Todo {
     name: String,
     id: usize,
@@ -46,10 +51,6 @@ impl TodoStore {
 
 struct TodoReducer { }
 
-#[derive(Clone)]
-enum TodoAction {
-    NewTodo { name: String }
-}
 
 impl Reducer for TodoReducer {
     type Action = TodoAction;

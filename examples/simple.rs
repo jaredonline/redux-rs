@@ -1,12 +1,3 @@
-# redux-rs
-
-An attempt at a uni-directional state flow written in Rust, heavily based in [redux-js](http://redux.js.org/).
-
-## Usage
-
-Here's a simple example of using a store and reducer to make a quick Todo list (you can run this by running `cargo run --example simple` or view the code [here]()).
-
-```rust
 extern crate redux;
 use redux::{Store, Reducer};
 
@@ -66,4 +57,3 @@ fn main() {
 
 	println!("{:?}", store.get_state());
 }
-```
