@@ -54,31 +54,32 @@ impl<T: Clone, A: Clone> Store<T, A> {
             middleware.after(&self, action.clone());
         }
 
-        // first try to prune old subscriptions; if we can't we might be in a subscriptions
-        // dispatch
-        match self.subscriptions.try_write() {
-            Ok(mut subscriptions) => {
-                let mut i = 0;
-                let mut subs_to_remove = vec![];
-                for subscription in &(*subscriptions) {
-                    if !subscription.is_active() {
-                        subs_to_remove.push(i);
-                    }
-                    i += 1;
-                }
-                for i in subs_to_remove {
-                    subscriptions.remove(i);
-                }
-            },
-            _ => {}
-        }
+        let mut i = 0;
+        let mut subs_to_remove = vec![];
         {
             let subscriptions = self.subscriptions.read().unwrap();
             for subscription in &(*subscriptions) {
                 if subscription.is_active() {
                     let ref cb = subscription.callback;
                     cb(&self);
+                } else {
+                    subs_to_remove.push(i);
                 }
+                i += 1;
+            }
+        }
+
+        // on every subscription callback loop we gather the indexes of cancelled
+        // subscriptions; if we leave a loop and have cancelled subscriptions, we'll
+        // try to remove them here
+        if subs_to_remove.len() > 0 {
+            match self.subscriptions.try_write() {
+                Ok(mut subscriptions) => {
+                    for j in subs_to_remove {
+                        subscriptions.remove(j);
+                    }
+                },
+                _ => {}
             }
         }
 
