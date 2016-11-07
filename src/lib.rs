@@ -1,51 +1,50 @@
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::default::Default;
+use std::fmt::Display;
 
-pub trait Reducer {
-    type Action;
-    type Item;
+pub trait Reducer: Clone + Default {
+    type Action: Clone;
+    type Error: Display;
 
-    fn reduce(&self, Self::Item, Self::Action) -> Self::Item;
-    fn init(&self) -> Self::Item;
+    fn reduce(&mut self, Self::Action) -> Result<&mut Self, Self::Error>;
 }
 
-pub trait Middleware<T: Clone, A: Clone> {
-    fn before(&self, store: &Store<T, A>, action: A);
-    fn after(&self, store: &Store<T, A>, action: A);
+pub trait Middleware<T: Reducer> {
+    fn before(&self, store: &Store<T>, action: T::Action);
+    fn after(&self, store: &Store<T>, action: T::Action);
 }
 
-pub struct Store<T: Clone, A: Clone> {
+pub struct Store<T: Reducer> {
     internal_store: Mutex<InternalStore<T>>,
-    reducer: Box<Reducer<Action = A, Item = T>>,
-    subscriptions: Arc<RwLock<Vec<Arc<Subscription<T, A>>>>>,
-    middlewares: Vec<Box<Middleware<T, A>>>,
+    subscriptions: Arc<RwLock<Vec<Arc<Subscription<T>>>>>,
+    middlewares: Vec<Box<Middleware<T>>>,
 }
 
-unsafe impl<T: Clone, A: Clone> Send for Store<T, A> {}
-unsafe impl<T: Clone, A: Clone> Sync for Store<T, A> {}
+unsafe impl<T: Reducer> Send for Store<T> {}
+unsafe impl<T: Reducer> Sync for Store<T> {}
 
-impl<T: 'static + Clone, A: 'static + Clone> Store<T, A> {
-    pub fn new(reducer: Box<Reducer<Action = A, Item = T>>, middlewares: Vec<Box<Middleware<T, A>>>) -> Store<T, A> {
-        let initial_data = reducer.init();
+impl<T: 'static + Reducer> Store<T> {
+    pub fn new(middlewares: Vec<Box<Middleware<T>>>) -> Store<T> {
+        let initial_data = T::default();
 
         Store {
             internal_store: Mutex::new(InternalStore {
                 data: initial_data,
                 is_dispatching: false,
             }),
-            reducer: reducer,
             subscriptions: Arc::new(RwLock::new(Vec::new())),
             middlewares: middlewares,
         }
     }
 
-    pub fn dispatch(&self, action: A) -> Result<A, String> {
+    pub fn dispatch(&self, action: T::Action) -> Result<T::Action, String> {
         for middleware in &self.middlewares {
             middleware.before(&self, action.clone());
         }
         match self.internal_store.try_lock() {
             Ok(mut guard) => {
-                let _ = guard.dispatch(action.clone(), &self.reducer);
+                let _ = guard.dispatch(action.clone());
             },
             Err(_) => {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
@@ -91,7 +90,7 @@ impl<T: 'static + Clone, A: 'static + Clone> Store<T, A> {
         self.internal_store.lock().unwrap().data.clone()
     }
 
-    pub fn subscribe(&self, callback: Box<Fn(&Store<T, A>)>) -> Arc<Subscription<T, A>> {
+    pub fn subscribe(&self, callback: Box<Fn(&Store<T>)>) -> Arc<Subscription<T>> {
         let subscription = Arc::new(Subscription::new(callback));
         let s = subscription.clone();
         let subs = self.subscriptions.clone();
@@ -104,38 +103,42 @@ impl<T: 'static + Clone, A: 'static + Clone> Store<T, A> {
     }
 }
 
-struct InternalStore<T: Clone> {
+struct InternalStore<T: Reducer> {
     data: T,
     is_dispatching: bool,
 }
 
-impl<T: Clone> InternalStore<T> {
-    fn dispatch<A: Clone>(&mut self, action: A, reducer: &Box<Reducer<Action = A, Item = T>>) -> Result<A, String> {
+impl<T: Reducer> InternalStore<T> {
+    fn dispatch(&mut self, action: T::Action) -> Result<T::Action, String> {
         if self.is_dispatching {
             return Err(String::from("Can't dispatch during a reduce."));
         }
 
-        let data = self.data.clone();
         self.is_dispatching = true;
-        self.data = reducer.reduce(data.clone(), action.clone());
+        match self.data.reduce(action.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("{}", e));
+            }
+        }
         self.is_dispatching = false;
 
         Ok(action)
     }
 }
 
-type SubscriptionFunc<T: Clone, A: Clone> = Box<Fn(&Store<T, A>)>;
+type SubscriptionFunc<T: Reducer> = Box<Fn(&Store<T>)>;
 
-pub struct Subscription<T: Clone, A: Clone> {
-    callback: SubscriptionFunc<T, A>,
+pub struct Subscription<T: Reducer> {
+    callback: SubscriptionFunc<T>,
     active: Mutex<bool>,
 }
 
-unsafe impl<T: Clone, A: Clone> Send for Subscription<T, A> {}
-unsafe impl<T: Clone, A: Clone> Sync for Subscription<T, A> {}
+unsafe impl<T: Reducer> Send for Subscription<T> {}
+unsafe impl<T: Reducer> Sync for Subscription<T> {}
 
-impl<T: Clone, A: Clone> Subscription<T, A> {
-    pub fn new(callback: SubscriptionFunc<T, A>) -> Subscription<T, A> {
+impl<T: Reducer> Subscription<T> {
+    pub fn new(callback: SubscriptionFunc<T>) -> Subscription<T> {
         Subscription {
             callback: callback,
             active: Mutex::new(true),

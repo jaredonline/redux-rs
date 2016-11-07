@@ -5,6 +5,7 @@ use redux::{Reducer, Store, Middleware};
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
 use std::{thread, time};
+use std::default::Default;
 
 #[derive(Clone)]
 enum TodoAction {
@@ -49,27 +50,26 @@ impl TodoStore {
     }
 }
 
-struct TodoReducer { }
+impl Default for TodoStore {
+    fn default() -> Self {
+        TodoStore::new()
+    }
+}
 
-
-impl Reducer for TodoReducer {
+impl Reducer for TodoStore {
     type Action = TodoAction;
-    type Item   = TodoStore;
+    type Error = String;
     
-    fn reduce(&self, data: Self::Item, action: Self::Action) -> Self::Item {
+    fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
         match action {
             TodoAction::NewTodo { name } => {
-                let mut data = data;
-                let todo = Todo { name: name, id: data.ticket(), };
-                data.push(todo);
-                data
+                let todo = Todo { name: name, id: self.ticket(), };
+                self.push(todo);
             },
             // _ => {}
         }
-    }
 
-    fn init(&self) -> Self::Item {
-        TodoStore::new()
+        Ok(self)
     }
 }
 
@@ -80,8 +80,7 @@ fn todo_list() {
     }
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
-    let reducer = Box::new(TodoReducer {});
-    let store = Store::new(reducer, vec![]);
+    let store : Store<TodoStore> = Store::new(vec![]);
     let pbacker = pingbacker.clone();
     store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -96,8 +95,7 @@ fn todo_list() {
 
 #[test]
 fn dispatch_from_a_listener() {
-    let reducer = Box::new(TodoReducer {});
-    let store = Store::new(reducer, vec![]);
+    let store : Store<TodoStore> = Store::new(vec![]);
     store.subscribe(Box::new(move |store| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
@@ -112,8 +110,7 @@ fn dispatch_from_a_listener() {
 
 #[test]
 fn multi_threaded_use() {
-    let reducer = Box::new(TodoReducer {});
-    let mut store = Arc::new(Store::new(reducer, vec![]));
+    let mut store : Arc<Store<TodoStore>> = Arc::new(Store::new(vec![]));
     {
         let store = Arc::get_mut(&mut store).unwrap();
         store.subscribe(Box::new(|s| {
@@ -141,8 +138,7 @@ fn cancel_subscription() {
     }
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
-    let reducer = Box::new(TodoReducer {});
-    let store = Store::new(reducer, vec![]);
+    let store : Store<TodoStore> = Store::new(vec![]);
     let pbacker = pingbacker.clone();
     let subscription = store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -173,13 +169,13 @@ impl Counter {
         }
     }
 }
-impl Middleware<TodoStore, TodoAction> for Counter {
-    fn before(&self, _: &Store<TodoStore, TodoAction>, _: TodoAction) {
+impl Middleware<TodoStore> for Counter {
+    fn before(&self, _: &Store<TodoStore>, _: TodoAction) {
         let mut count = self.before_count.lock().unwrap();
         *count += 1;
     }
 
-    fn after(&self, _: &Store<TodoStore, TodoAction>, _: TodoAction) {
+    fn after(&self, _: &Store<TodoStore>, _: TodoAction) {
         let mut count = self.after_count.lock().unwrap();
         *count += 2;
     }
@@ -190,8 +186,7 @@ fn middleware() {
     let before_count = Arc::new(Mutex::new(0));
     let after_count = Arc::new(Mutex::new(0));
     let counter = Box::new(Counter::new(before_count.clone(), after_count.clone()));
-    let reducer = Box::new(TodoReducer {});
-    let store = Store::new(reducer, vec![counter]);
+    let store : Store<TodoStore> = Store::new(vec![counter]);
     let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
     let _ = store.dispatch(action);
     assert_eq!(1, store.get_state().len());
@@ -201,8 +196,7 @@ fn middleware() {
 
 #[test]
 fn subscribe_during_subscription_callback() {
-    let reducer = Box::new(TodoReducer {});
-    let store = Store::new(reducer, vec![]);
+    let store : Store<TodoStore> = Store::new(vec![]);
 
     // on our first action, sub another subscriber that adds more actions
     let sub = store.subscribe(Box::new(move |store| {
