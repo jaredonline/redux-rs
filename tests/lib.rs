@@ -198,3 +198,28 @@ fn middleware() {
     assert_eq!(1, *before_count.lock().unwrap());
     assert_eq!(2, *after_count.lock().unwrap());
 }
+
+#[test]
+fn subscribe_during_subscription_callback() {
+    let reducer = Box::new(TodoReducer {});
+    let store = Store::new(reducer, vec![]);
+
+    // on our first action, sub another subscriber that adds more actions
+    let sub = store.subscribe(Box::new(move |store| {
+        store.subscribe(Box::new(|store| {
+            if store.get_state().len() < 5 {
+                let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+                let _ = store.dispatch(action);
+            }
+        }));
+    }));
+    
+    let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+    let _ = store.dispatch(action.clone());
+    assert_eq!(1, store.get_state().len());
+    // cancel the first subscription so we're not caught in an infinite subscriber loop
+    sub.cancel();
+
+    let _ = store.dispatch(action.clone());
+    assert_eq!(5, store.get_state().len());
+}

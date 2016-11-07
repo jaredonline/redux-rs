@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 
 pub trait Reducer {
     type Action;
@@ -16,14 +17,14 @@ pub trait Middleware<T: Clone, A: Clone> {
 pub struct Store<T: Clone, A: Clone> {
     internal_store: Mutex<InternalStore<T>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
-    subscriptions: RwLock<Vec<Arc<Subscription<T, A>>>>,
+    subscriptions: Arc<RwLock<Vec<Arc<Subscription<T, A>>>>>,
     middlewares: Vec<Box<Middleware<T, A>>>,
 }
 
 unsafe impl<T: Clone, A: Clone> Send for Store<T, A> {}
 unsafe impl<T: Clone, A: Clone> Sync for Store<T, A> {}
 
-impl<T: Clone, A: Clone> Store<T, A> {
+impl<T: 'static + Clone, A: 'static + Clone> Store<T, A> {
     pub fn new(reducer: Box<Reducer<Action = A, Item = T>>, middlewares: Vec<Box<Middleware<T, A>>>) -> Store<T, A> {
         let initial_data = reducer.init();
 
@@ -33,7 +34,7 @@ impl<T: Clone, A: Clone> Store<T, A> {
                 is_dispatching: false,
             }),
             reducer: reducer,
-            subscriptions: RwLock::new(Vec::new()),
+            subscriptions: Arc::new(RwLock::new(Vec::new())),
             middlewares: middlewares,
         }
     }
@@ -92,9 +93,13 @@ impl<T: Clone, A: Clone> Store<T, A> {
 
     pub fn subscribe(&self, callback: Box<Fn(&Store<T, A>)>) -> Arc<Subscription<T, A>> {
         let subscription = Arc::new(Subscription::new(callback));
-        {
-            self.subscriptions.write().unwrap().push(subscription.clone());
-        }
+        let s = subscription.clone();
+        let subs = self.subscriptions.clone();
+        thread::spawn(move || {
+            {
+                subs.write().unwrap().push(s);
+            }
+        });
         return subscription;
     }
 }
@@ -125,6 +130,9 @@ pub struct Subscription<T: Clone, A: Clone> {
     callback: SubscriptionFunc<T, A>,
     active: Mutex<bool>,
 }
+
+unsafe impl<T: Clone, A: Clone> Send for Subscription<T, A> {}
+unsafe impl<T: Clone, A: Clone> Sync for Subscription<T, A> {}
 
 impl<T: Clone, A: Clone> Subscription<T, A> {
     pub fn new(callback: SubscriptionFunc<T, A>) -> Subscription<T, A> {
