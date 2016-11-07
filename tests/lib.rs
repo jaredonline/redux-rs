@@ -81,7 +81,7 @@ fn todo_list() {
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer, vec![]);
+    let store = Store::new(reducer, vec![]);
     let pbacker = pingbacker.clone();
     store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -97,7 +97,7 @@ fn todo_list() {
 #[test]
 fn dispatch_from_a_listener() {
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer, vec![]);
+    let store = Store::new(reducer, vec![]);
     store.subscribe(Box::new(move |store| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
@@ -115,7 +115,7 @@ fn multi_threaded_use() {
     let reducer = Box::new(TodoReducer {});
     let mut store = Arc::new(Store::new(reducer, vec![]));
     {
-        let mut store = Arc::get_mut(&mut store).unwrap();
+        let store = Arc::get_mut(&mut store).unwrap();
         store.subscribe(Box::new(|s| {
             if s.get_state().len() < 2 {
                 let action = TodoAction::NewTodo {name: String::from("Add-on to g-shopping")};
@@ -142,7 +142,7 @@ fn cancel_subscription() {
     let pingbacker = Arc::new(Mutex::new(PingbackTester { counter: 0 }));
 
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer, vec![]);
+    let store = Store::new(reducer, vec![]);
     let pbacker = pingbacker.clone();
     let subscription = store.subscribe(Box::new(move |_| {
         let mut pingbacker = pingbacker.lock().unwrap();
@@ -191,7 +191,7 @@ fn middleware() {
     let after_count = Arc::new(Mutex::new(0));
     let counter = Box::new(Counter::new(before_count.clone(), after_count.clone()));
     let reducer = Box::new(TodoReducer {});
-    let mut store = Store::new(reducer, vec![counter]);
+    let store = Store::new(reducer, vec![counter]);
     let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
     let _ = store.dispatch(action);
     assert_eq!(1, store.get_state().len());

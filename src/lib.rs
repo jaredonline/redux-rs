@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub trait Reducer {
     type Action;
@@ -16,7 +16,7 @@ pub trait Middleware<T: Clone, A: Clone> {
 pub struct Store<T: Clone, A: Clone> {
     internal_store: Mutex<InternalStore<T>>,
     reducer: Box<Reducer<Action = A, Item = T>>,
-    subscriptions: Vec<Arc<Subscription<T, A>>>,
+    subscriptions: RwLock<Vec<Arc<Subscription<T, A>>>>,
     middlewares: Vec<Box<Middleware<T, A>>>,
 }
 
@@ -33,7 +33,7 @@ impl<T: Clone, A: Clone> Store<T, A> {
                 is_dispatching: false,
             }),
             reducer: reducer,
-            subscriptions: Vec::new(),
+            subscriptions: RwLock::new(Vec::new()),
             middlewares: middlewares,
         }
     }
@@ -54,13 +54,31 @@ impl<T: Clone, A: Clone> Store<T, A> {
             middleware.after(&self, action.clone());
         }
 
-        for subscription in &self.subscriptions {
-            let active = {
-                *subscription.active.lock().unwrap()
-            };
-            if active {
-                let ref cb = subscription.callback;
-                cb(&self);
+        // first try to prune old subscriptions; if we can't we might be in a subscriptions
+        // dispatch
+        match self.subscriptions.try_write() {
+            Ok(mut subscriptions) => {
+                let mut i = 0;
+                let mut subs_to_remove = vec![];
+                for subscription in &(*subscriptions) {
+                    if !subscription.is_active() {
+                        subs_to_remove.push(i);
+                    }
+                    i += 1;
+                }
+                for i in subs_to_remove {
+                    subscriptions.remove(i);
+                }
+            },
+            _ => {}
+        }
+        {
+            let subscriptions = self.subscriptions.read().unwrap();
+            for subscription in &(*subscriptions) {
+                if subscription.is_active() {
+                    let ref cb = subscription.callback;
+                    cb(&self);
+                }
             }
         }
 
@@ -71,9 +89,11 @@ impl<T: Clone, A: Clone> Store<T, A> {
         self.internal_store.lock().unwrap().data.clone()
     }
 
-    pub fn subscribe(&mut self, callback: Box<Fn(&Store<T, A>)>) -> Arc<Subscription<T, A>> {
+    pub fn subscribe(&self, callback: Box<Fn(&Store<T, A>)>) -> Arc<Subscription<T, A>> {
         let subscription = Arc::new(Subscription::new(callback));
-        self.subscriptions.push(subscription.clone());
+        {
+            self.subscriptions.write().unwrap().push(subscription.clone());
+        }
         return subscription;
     }
 }
@@ -116,5 +136,9 @@ impl<T: Clone, A: Clone> Subscription<T, A> {
     pub fn cancel(&self) {
         let mut active = self.active.lock().unwrap();
         *active = false;
+    }
+
+    pub fn is_active(&self) -> bool {
+        *self.active.lock().unwrap()
     }
 }
