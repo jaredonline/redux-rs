@@ -39,14 +39,15 @@ impl Reducer for TodoState {
 	type Action = TodoAction;
 	type Error = String;
 
-	fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
+	fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
 		match action {
             TodoAction::Insert(name) => {
                 let todo = Todo { name: name, };
                 self.push(todo);
-                Ok(self.clone())
             },
 		}
+
+        Ok(self)
 	}
 }
 

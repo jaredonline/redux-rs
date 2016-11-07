@@ -60,15 +60,16 @@ impl Reducer for TodoStore {
     type Action = TodoAction;
     type Error = String;
     
-    fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
+    fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
         match action {
             TodoAction::NewTodo { name } => {
                 let todo = Todo { name: name, id: self.ticket(), };
                 self.push(todo);
-                Ok(self.clone())
             },
             // _ => {}
         }
+
+        Ok(self)
     }
 }
 

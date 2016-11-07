@@ -7,7 +7,7 @@ pub trait Reducer: Clone + Default {
     type Action: Clone;
     type Error: Display;
 
-    fn reduce(&mut self, Self::Action) -> Result<Self, Self::Error>;
+    fn reduce(&mut self, Self::Action) -> Result<&mut Self, Self::Error>;
 }
 
 pub trait Middleware<T: Reducer> {
