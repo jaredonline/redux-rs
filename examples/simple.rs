@@ -1,5 +1,6 @@
 extern crate redux;
 use redux::{Store, Reducer};
+use std::default::Default;
 
 #[derive(Clone, Debug)]
 struct Todo {
@@ -28,30 +29,29 @@ enum TodoAction {
 	Insert(&'static str),
 }
 
-struct TodoReducer {}
-impl Reducer for TodoReducer {
-	type Action = TodoAction;
-	type Item = TodoState;
-
-	fn reduce(&self, data: Self::Item, action: Self::Action) -> Self::Item {
-		match action {
-            TodoAction::Insert(name) => {
-                let mut data = data;
-                let todo = Todo { name: name, };
-                data.push(todo);
-                data
-            },
-		}
-	}
-
-    fn init(&self) -> Self::Item {
+impl Default for TodoState {
+    fn default() -> Self {
         TodoState::new()
     }
 }
 
+impl Reducer for TodoState {
+	type Action = TodoAction;
+	type Error = String;
+
+	fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
+		match action {
+            TodoAction::Insert(name) => {
+                let todo = Todo { name: name, };
+                self.push(todo);
+                Ok(self.clone())
+            },
+		}
+	}
+}
+
 fn main() {
-    let reducer = Box::new(TodoReducer{});
-	let store = Store::new(reducer, vec![]);
+	let store : Store<TodoState> = Store::new(vec![]);
 	let action = TodoAction::Insert("Clean the bathroom");
 	let _ = store.dispatch(action);
 
