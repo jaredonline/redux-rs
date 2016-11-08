@@ -138,7 +138,7 @@ unsafe impl<T: Reducer> Send for Subscription<T> {}
 unsafe impl<T: Reducer> Sync for Subscription<T> {}
 
 impl<T: Reducer> Subscription<T> {
-    pub fn new(callback: SubscriptionFunc<T>) -> Subscription<T> {
+    fn new(callback: SubscriptionFunc<T>) -> Subscription<T> {
         Subscription {
             callback: callback,
             active: Mutex::new(true),

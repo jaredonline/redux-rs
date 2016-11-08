@@ -1,5 +1,7 @@
 # redux-rs
 
+![travis-ci](https://travis-ci.org/jaredonline/redux-rs.svg)
+
 An attempt at a uni-directional state flow written in Rust, heavily based in [redux-js](http://redux.js.org/).
 
 ## Usage
