@@ -97,9 +97,7 @@ impl<T: 'static + Reducer> Store<T> {
             Err(_) => {
                 let subs = self.subscriptions.clone();
                 thread::spawn(move || {
-                    {
-                        subs.write().unwrap().push(s);
-                    }
+                    subs.write().unwrap().push(s);
                 });
             },
             Ok(mut guard) => guard.push(s),
