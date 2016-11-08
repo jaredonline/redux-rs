@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread;
 use std::default::Default;
 use std::fmt::Display;
 
@@ -44,7 +43,12 @@ impl<T: 'static + Reducer> Store<T> {
         }
         match self.internal_store.try_lock() {
             Ok(mut guard) => {
-                let _ = guard.dispatch(action.clone());
+                match guard.dispatch(action.clone()) {
+                    Err(e) => {
+                        return Err(format!("Error during dispatch: {}", e));
+                    },
+                    _ => {}
+                }
             },
             Err(_) => {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
@@ -57,12 +61,12 @@ impl<T: 'static + Reducer> Store<T> {
 
         let mut i = 0;
         let mut subs_to_remove = vec![];
+        let mut subs_to_use = vec![];
         {
             let subscriptions = self.subscriptions.read().unwrap();
             for subscription in &(*subscriptions) {
                 if subscription.is_active() {
-                    let ref cb = subscription.callback;
-                    cb(&self);
+                    subs_to_use.push(subscription.clone());
                 } else {
                     subs_to_remove.push(i);
                 }
@@ -84,6 +88,12 @@ impl<T: 'static + Reducer> Store<T> {
             }
         }
 
+        // actually run the subscriptions here
+        for subscription in subs_to_use {
+            let cb = &subscription.callback;
+            cb(&self);
+        }
+
         Ok(action)
     }
 
@@ -94,20 +104,7 @@ impl<T: 'static + Reducer> Store<T> {
     pub fn subscribe(&self, callback: Box<Fn(&Store<T>)>) -> Arc<Subscription<T>> {
         let subscription = Arc::new(Subscription::new(callback));
         let s = subscription.clone();
-        match self.subscriptions.try_write() {
-            Err(_) => {
-                let subs = self.subscriptions.clone();
-                // TODO: This thread causes a race condition... if you add a new
-                // subscription to a store during a dispatch, this subscriber might
-                // not be available before the next dispatch is called (the next
-                // dispatch might fire before this thread can obtain the write
-                // lock on the subscriptions
-                thread::spawn(move || {
-                    subs.write().unwrap().push(s);
-                });
-            },
-            Ok(mut guard) => guard.push(s),
-        }
+        self.subscriptions.write().unwrap().push(s);
         return subscription;
     }
 }
