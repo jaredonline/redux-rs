@@ -2,24 +2,137 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::default::Default;
 use std::fmt::Display;
 
+/// The `Reducer` trait is meant to be applied to the object that contains your
+/// applications state. Because each application will have their own custom state
+/// to track, we don't provide a sort of state object in redux-rs.
+///
+/// redux-rs expects a 1:1:1 mapping between your Store, your State and your Reducer
+///
+/// ## Types
+///
+/// `Reducer` requires you provide two types:
+///  - `Action` is the type of action your `Reducer` reduces
+///  - `Error` the type of error this `Reducer` can return
+///
+/// ## Required traits
+///
+/// `Reducer` requires your type implements `Clone` and `Default`.
+///
+/// ## Example
+/// 
+/// Here's an example that provides a state object, implements Reducer on it and
+/// creates the store:
+///
+/// ```
+/// # #[allow(dead_code)]
+/// use redux::{Reducer, Store};
+///
+/// #[derive(Clone, Default)]
+/// struct MyState {
+///     foo: usize,
+///     bar: usize,
+/// }
+///
+/// impl Reducer for MyState {
+///     type Action = String;
+///     type Error = String;
+///
+///     fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
+///         Ok(self)
+///     }
+/// }
+///
+/// fn main() {
+///     let store : Store<MyState> = Store::new(vec![]);
+/// }
+/// ```
 pub trait Reducer: Clone + Default {
+    /// The type of action that this reducer can accept, probably an enum
     type Action: Clone;
+
+    /// The type of error this reducer can return in the `Result`
     type Error: Display;
 
+    /// Reduce a given state based upon an action. This won't be called externally
+    /// because your application will never have a reference to the state object
+    /// directly. Instead, it'll be called with you call `store.dispatch`.
     fn reduce(&mut self, Self::Action) -> Result<&mut Self, Self::Error>;
 }
 
-pub trait Middleware<T: Reducer> {
-    fn before(&self, store: &Store<T>, action: T::Action);
-    fn after(&self, store: &Store<T>, action: T::Action);
-}
-
+/// The `Store` is the main access point for your application. As soon as you
+/// initialize your `Store` it will start your state in the default state and
+/// allow you to start dispatching events to it.
+///
+/// ## Example
+///
+/// ```
+/// # #[allow(dead_code)]
+/// use redux::{Reducer, Store};
+///
+/// #[derive(Clone, Debug)]
+/// struct Todo {
+/// 	name: &'static str,
+/// }
+/// 
+/// #[derive(Clone, Debug)]
+/// struct TodoState {
+/// 	todos: Vec<Todo>,
+/// }
+/// 
+/// impl TodoState {
+///     fn new() -> TodoState {
+///         TodoState {
+///             todos: vec![],
+///         }
+///     }
+/// 
+/// 	fn push(&mut self, todo: Todo) {
+/// 		self.todos.push(todo);
+/// 	}
+/// }
+/// 
+/// #[derive(Clone)]
+/// enum TodoAction {
+/// 	Insert(&'static str),
+/// }
+/// 
+/// impl Default for TodoState {
+///     fn default() -> Self {
+///         TodoState::new()
+///     }
+/// }
+/// 
+/// impl Reducer for TodoState {
+/// 	type Action = TodoAction;
+/// 	type Error = String;
+/// 
+/// 	fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
+/// 		match action {
+///             TodoAction::Insert(name) => {
+///                 let todo = Todo { name: name, };
+///                 self.push(todo);
+///             },
+/// 		}
+/// 
+///         Ok(self)
+/// 	}
+/// }
+/// 
+/// fn main() {
+/// 	let store : Store<TodoState> = Store::new(vec![]);
+/// 	let action = TodoAction::Insert("Clean the bathroom");
+/// 	let _ = store.dispatch(action);
+/// 
+/// 	println!("{:?}", store.get_state());
+/// }
+/// ```
 pub struct Store<T: Reducer> {
     internal_store: Mutex<InternalStore<T>>,
     subscriptions: Arc<RwLock<Vec<Arc<Subscription<T>>>>>,
     middlewares: Vec<Box<Middleware<T>>>,
 }
 
+// Would love to get rid of these someday
 unsafe impl<T: Reducer> Send for Store<T> {}
 unsafe impl<T: Reducer> Sync for Store<T> {}
 
@@ -179,6 +292,11 @@ impl<T: Reducer> Subscription<T> {
     }
 }
 
+pub trait Middleware<T: Reducer> {
+    fn before(&self, store: &Store<T>, action: T::Action);
+    fn after(&self, store: &Store<T>, action: T::Action);
+}
+
 #[cfg(test)]
 impl Reducer for usize {
     type Action = usize;
@@ -223,6 +341,7 @@ fn try_remove_subscriptions_easy_lock() {
     store.try_to_remove_subscriptions(remove);
     let (_, subs) = store.get_subscriptions();
     assert_eq!(0, subs.len());
+    assert_eq!(0, store.subscriptions.read().unwrap().len());
 }
 
 #[test]
