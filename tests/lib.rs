@@ -82,7 +82,7 @@ fn todo_list() {
 
     let store : Store<TodoStore> = Store::new(vec![]);
     let pbacker = pingbacker.clone();
-    store.subscribe(Box::new(move |_| {
+    store.subscribe(Box::new(move |_, _| {
         let mut pingbacker = pingbacker.lock().unwrap();
         pingbacker.counter += 1;
     }));
@@ -96,7 +96,7 @@ fn todo_list() {
 #[test]
 fn dispatch_from_a_listener() {
     let store : Store<TodoStore> = Store::new(vec![]);
-    store.subscribe(Box::new(|store| {
+    store.subscribe(Box::new(|store, _| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
             let _ = store.dispatch(action);
@@ -113,7 +113,7 @@ fn multi_threaded_use() {
     let mut store : Arc<Store<TodoStore>> = Arc::new(Store::new(vec![]));
     {
         let store = Arc::get_mut(&mut store).unwrap();
-        store.subscribe(Box::new(|s| {
+        store.subscribe(Box::new(|s, _| {
             if s.get_state().len() < 2 {
                 let action = TodoAction::NewTodo {name: String::from("Add-on to g-shopping")};
                 let _ = s.dispatch(action);
@@ -140,7 +140,7 @@ fn cancel_subscription() {
 
     let store : Store<TodoStore> = Store::new(vec![]);
     let pbacker = pingbacker.clone();
-    let subscription = store.subscribe(Box::new(move |_| {
+    let subscription = store.subscribe(Box::new(move |_, _| {
         let mut pingbacker = pingbacker.lock().unwrap();
         pingbacker.counter += 1;
     }));
@@ -199,8 +199,8 @@ fn subscribe_during_subscription_callback() {
     let store : Store<TodoStore> = Store::new(vec![]);
 
     // on our first action, sub another subscriber that adds more actions
-    let sub = store.subscribe(Box::new(move |store| {
-        store.subscribe(Box::new(|store| {
+    let sub = store.subscribe(Box::new(move |store, _| {
+        store.subscribe(Box::new(|store, _| {
             if store.get_state().len() < 5 {
                 let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
                 let _ = store.dispatch(action);
@@ -214,6 +214,31 @@ fn subscribe_during_subscription_callback() {
     // cancel the first subscription so we're not caught in an infinite subscriber loop
     sub.cancel();
 
+    let _ = store.dispatch(action.clone());
+    assert_eq!(5, store.get_state().len());
+}
+
+#[test]
+fn subscribe_and_cancel_during_subscription_callback() {
+    let store : Store<TodoStore> = Store::new(vec![]);
+
+    // on our first action, sub another subscriber that adds more actions; then cancel
+    // the first subscription and fire a new event. This should trigger the inner
+    // subscription to fire, creating events in a loop until we hit 5
+    store.subscribe(Box::new(move |store, subscription| {
+        store.subscribe(Box::new(|store, _| {
+            if store.get_state().len() < 5 {
+                let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+                let _ = store.dispatch(action);
+            }
+        }));
+
+        subscription.cancel();
+        let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
+        let _ = store.dispatch(action.clone());
+    }));
+    
+    let action = TodoAction::NewTodo {name: String::from("Grocery Shopping")};
     let _ = store.dispatch(action.clone());
     assert_eq!(5, store.get_state().len());
 }

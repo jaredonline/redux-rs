@@ -99,7 +99,7 @@ impl<T: 'static + Reducer> Store<T> {
         // vec gets dropped, and all the Arcs of subscriptions get decremented
         for subscription in subs_to_use {
             let cb = &subscription.callback;
-            cb(&self);
+            cb(&self, &subscription);
         }
 
         Ok(action)
@@ -109,7 +109,7 @@ impl<T: 'static + Reducer> Store<T> {
         self.internal_store.lock().unwrap().data.clone()
     }
 
-    pub fn subscribe(&self, callback: Box<Fn(&Store<T>)>) -> Arc<Subscription<T>> {
+    pub fn subscribe(&self, callback: SubscriptionFunc<T>) -> Arc<Subscription<T>> {
         let subscription = Arc::new(Subscription::new(callback));
         let s = subscription.clone();
         self.subscriptions.write().unwrap().push(s);
@@ -141,7 +141,7 @@ impl<T: Reducer> InternalStore<T> {
     }
 }
 
-type SubscriptionFunc<T: Reducer> = Box<Fn(&Store<T>)>;
+type SubscriptionFunc<T: Reducer> = Box<Fn(&Store<T>, &Subscription<T>)>;
 
 pub struct Subscription<T: Reducer> {
     callback: SubscriptionFunc<T>,
