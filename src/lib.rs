@@ -54,11 +54,18 @@ impl<T: 'static + Reducer> Store<T> {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
             }
         }
+        // Weird looping to go backwards so that we emulate Redux.js way of handling
+        // middleware: wrap down the chain of middlewares, then back up.
         for i in (0 .. self.middlewares.len()).into_iter().rev() {
             let middleware = &self.middlewares[i];
             middleware.after(&self, action.clone());
         }
 
+        // snapshot the active subscriptions here before calling them. This both
+        // emulates the Redux.js way of doing them *and* frees up the lock so
+        // that a subscription can cause another subscription; also use this
+        // loop to grab the ones that are safe to remove and try to remove them
+        // after this
         let mut i = 0;
         let mut subs_to_remove = vec![];
         let mut subs_to_use = vec![];
@@ -88,7 +95,8 @@ impl<T: 'static + Reducer> Store<T> {
             }
         }
 
-        // actually run the subscriptions here
+        // actually run the subscriptions here; after this method is over the subs_to_use
+        // vec gets dropped, and all the Arcs of subscriptions get decremented
         for subscription in subs_to_use {
             let cb = &subscription.callback;
             cb(&self);
