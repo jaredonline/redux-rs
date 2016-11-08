@@ -137,6 +137,7 @@ unsafe impl<T: Reducer> Send for Store<T> {}
 unsafe impl<T: Reducer> Sync for Store<T> {}
 
 impl<T: 'static + Reducer> Store<T> {
+    /// Initialize a new `Store`. 
     pub fn new(middlewares: Vec<Box<Middleware<T>>>) -> Store<T> {
         let initial_data = T::default();
 
@@ -150,6 +151,8 @@ impl<T: 'static + Reducer> Store<T> {
         }
     }
 
+    /// Dispatch an event to the stores, returning an `Result`. Only one dispatch
+    /// can be happening at a time.
     pub fn dispatch(&self, action: T::Action) -> Result<T::Action, String> {
         for middleware in &self.middlewares {
             middleware.before(&self, action.clone());
@@ -196,10 +199,54 @@ impl<T: 'static + Reducer> Store<T> {
         Ok(action)
     }
 
+    /// Returns a `Clone` of the store's state. If called during a dispatch, this
+    /// will block until the dispatch is over.
     pub fn get_state(&self) -> T {
         self.internal_store.lock().unwrap().data.clone()
     }
 
+    /// Create a new subscription to this store. Subscriptions are called for every
+    /// dispatch made. 
+    /// 
+    /// ## Nested subscriptions
+    /// 
+    /// Its possible to subscribe to a store from within a currently called 
+    /// subscription:
+    /// 
+    /// ```
+    /// # #[allow(dead_code)]
+    /// # use redux::{Reducer, Store};
+    /// #
+    /// # #[derive(Clone, Default)]
+    /// # struct Foo {}
+    /// # impl Reducer for Foo {
+    /// #     type Action = usize;
+    /// #     type Error = String;
+    /// #     
+    /// #     fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
+    /// #         Ok(self)
+    /// #     }
+    /// # }
+    /// #
+    /// # let store : Store<Foo> = Store::new(vec![]);
+    /// store.subscribe(Box::new(|store, _| {
+    ///     store.subscribe(Box::new(|_, _| { }));
+    /// }));
+    /// ```
+    ///
+    /// The nested subscription won't be called until the next dispatch.
+    ///
+    /// ## Snapshotting subscriptions
+    /// 
+    /// Subscriptions are snap-shotted immediately after the reducer and middlewares
+    /// finish and before the subscriptions are called, so any subscriptions made
+    /// during a subscription callback won't be fired until the next dispatch
+    ///
+    /// ## Return value
+    /// 
+    /// This method returns a `Subscription` wrapped in an `Arc` because both
+    /// the caller of the method and the internal list of subscriptions need
+    /// a reference to it
     pub fn subscribe(&self, callback: SubscriptionFunc<T>) -> Arc<Subscription<T>> {
         let subscription = Arc::new(Subscription::new(callback));
         let s = subscription.clone();
@@ -266,6 +313,7 @@ impl<T: Reducer> InternalStore<T> {
 
 type SubscriptionFunc<T: Reducer> = Box<Fn(&Store<T>, &Subscription<T>)>;
 
+/// Represents a subscription to a `Store` which can be cancelled.
 pub struct Subscription<T: Reducer> {
     callback: SubscriptionFunc<T>,
     active: Mutex<bool>,
@@ -282,16 +330,63 @@ impl<T: Reducer> Subscription<T> {
         }
     }
 
+    /// Cancels a subscription which means it will no longer be called on a 
+    /// dispatch and it will be removed from the internal list of subscriptions
+    /// at the next available time.
+    ///
+    /// A cancelled subscription cannot be re-instated
     pub fn cancel(&self) {
         let mut active = self.active.lock().unwrap();
         *active = false;
     }
 
+    /// Returns whether or not a subscription has been cancelled.
     pub fn is_active(&self) -> bool {
         *self.active.lock().unwrap()
     }
 }
 
+/// A decent approximation of a redux-js middleware wrapper. This lets you have
+/// wrap calls to dispatch, performing actions right before and right after a
+/// call. Each call to dispatch in a Store will loop the middlewares, calling
+/// before, then call the dispatch, then loop the middlewares in reverse order
+/// calling after.
+///
+/// ## Example:
+///
+/// ```
+/// # #[allow(dead_code)]
+/// # use redux::{Store, Reducer, Middleware};
+/// #
+/// # #[derive(Clone, Debug)]
+/// # enum FooAction {}
+/// #
+/// # #[derive(Clone, Default, Debug)]
+/// # struct Foo {}
+/// # impl Reducer for Foo {
+/// #   type Action = FooAction;
+/// #   type Error = String;
+/// #
+/// #   fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
+/// #       Ok(self)
+/// #   }
+/// # }
+///
+/// struct Logger{}
+/// impl Middleware<Foo> for Logger {
+///     fn before(&self, store: &Store<Foo>, action: FooAction) {
+///         println!("Called action: {:?}", action);
+///         println!("State before action: {:?}", store.get_state());
+///     }
+///
+///     fn after(&self, store: &Store<Foo>, _: FooAction) {
+///         println!("State after action: {:?}", store.get_state());
+///     }
+/// }
+///
+/// let logger = Box::new(Logger{});
+/// let store : Store<Foo> = Store::new(vec![logger]);
+/// ```
 pub trait Middleware<T: Reducer> {
     fn before(&self, store: &Store<T>, action: T::Action);
     fn after(&self, store: &Store<T>, action: T::Action);
