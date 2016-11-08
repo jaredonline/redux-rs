@@ -96,7 +96,7 @@ fn todo_list() {
 #[test]
 fn dispatch_from_a_listener() {
     let store : Store<TodoStore> = Store::new(vec![]);
-    store.subscribe(Box::new(move |store| {
+    store.subscribe(Box::new(|store| {
         if store.get_state().len() < 2 {
             let action = TodoAction::NewTodo {name: String::from("Finish that new todo")};
             let _ = store.dispatch(action);
