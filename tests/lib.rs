@@ -213,6 +213,7 @@ fn subscribe_during_subscription_callback() {
     assert_eq!(1, store.get_state().len());
     // cancel the first subscription so we're not caught in an infinite subscriber loop
     sub.cancel();
+    // TODO: This sleep shouldn't be necessary
     thread::sleep(time::Duration::from_secs(1));
 
     let _ = store.dispatch(action.clone());

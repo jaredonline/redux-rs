@@ -50,7 +50,8 @@ impl<T: 'static + Reducer> Store<T> {
                 return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
             }
         }
-        for middleware in &self.middlewares {
+        for i in (0 .. self.middlewares.len()).into_iter().rev() {
+            let middleware = &self.middlewares[i];
             middleware.after(&self, action.clone());
         }
 
@@ -96,6 +97,11 @@ impl<T: 'static + Reducer> Store<T> {
         match self.subscriptions.try_write() {
             Err(_) => {
                 let subs = self.subscriptions.clone();
+                // TODO: This thread causes a race condition... if you add a new
+                // subscription to a store during a dispatch, this subscriber might
+                // not be available before the next dispatch is called (the next
+                // dispatch might fire before this thread can obtain the write
+                // lock on the subscriptions
                 thread::spawn(move || {
                     subs.write().unwrap().push(s);
                 });
