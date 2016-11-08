@@ -93,12 +93,17 @@ impl<T: 'static + Reducer> Store<T> {
     pub fn subscribe(&self, callback: Box<Fn(&Store<T>)>) -> Arc<Subscription<T>> {
         let subscription = Arc::new(Subscription::new(callback));
         let s = subscription.clone();
-        let subs = self.subscriptions.clone();
-        thread::spawn(move || {
-            {
-                subs.write().unwrap().push(s);
-            }
-        });
+        match self.subscriptions.try_write() {
+            Err(_) => {
+                let subs = self.subscriptions.clone();
+                thread::spawn(move || {
+                    {
+                        subs.write().unwrap().push(s);
+                    }
+                });
+            },
+            Ok(mut guard) => guard.push(s),
+        }
         return subscription;
     }
 }
