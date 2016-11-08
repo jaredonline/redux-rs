@@ -66,34 +66,12 @@ impl<T: 'static + Reducer> Store<T> {
         // that a subscription can cause another subscription; also use this
         // loop to grab the ones that are safe to remove and try to remove them
         // after this
-        let mut i = 0;
-        let mut subs_to_remove = vec![];
-        let mut subs_to_use = vec![];
-        {
-            let subscriptions = self.subscriptions.read().unwrap();
-            for subscription in &(*subscriptions) {
-                if subscription.is_active() {
-                    subs_to_use.push(subscription.clone());
-                } else {
-                    subs_to_remove.push(i);
-                }
-                i += 1;
-            }
-        }
+        let (subs_to_remove, subs_to_use) = self.get_subscriptions();
 
         // on every subscription callback loop we gather the indexes of cancelled
         // subscriptions; if we leave a loop and have cancelled subscriptions, we'll
         // try to remove them here
-        if subs_to_remove.len() > 0 {
-            match self.subscriptions.try_write() {
-                Ok(mut subscriptions) => {
-                    for j in subs_to_remove {
-                        subscriptions.remove(j);
-                    }
-                },
-                _ => {}
-            }
-        }
+        self.try_to_remove_subscriptions(subs_to_remove);
 
         // actually run the subscriptions here; after this method is over the subs_to_use
         // vec gets dropped, and all the Arcs of subscriptions get decremented
@@ -114,6 +92,38 @@ impl<T: 'static + Reducer> Store<T> {
         let s = subscription.clone();
         self.subscriptions.write().unwrap().push(s);
         return subscription;
+    }
+
+    fn get_subscriptions(&self) -> (Vec<usize>, Vec<Arc<Subscription<T>>>) {
+        let mut i = 0;
+        let mut subs_to_remove = vec![];
+        let mut subs_to_use = vec![];
+        {
+            let subscriptions = self.subscriptions.read().unwrap();
+            for subscription in &(*subscriptions) {
+                if subscription.is_active() {
+                    subs_to_use.push(subscription.clone());
+                } else {
+                    subs_to_remove.push(i);
+                }
+                i += 1;
+            }
+        }
+
+        (subs_to_remove, subs_to_use)
+    }
+
+    fn try_to_remove_subscriptions(&self, subs_to_remove: Vec<usize>) {
+        if subs_to_remove.len() > 0 {
+            match self.subscriptions.try_write() {
+                Ok(mut subscriptions) => {
+                    for sub_index in subs_to_remove {
+                        subscriptions.remove(sub_index);
+                    }
+                },
+                _ => {}
+            }
+        }
     }
 }
 
@@ -167,4 +177,64 @@ impl<T: Reducer> Subscription<T> {
     pub fn is_active(&self) -> bool {
         *self.active.lock().unwrap()
     }
+}
+
+#[cfg(test)]
+impl Reducer for usize {
+    type Action = usize;
+    type Error = String;
+
+    fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
+        Ok(self)
+    }
+}
+
+#[test]
+fn get_subscriptions() {
+    let store : Store<usize> = Store::new(vec![]);
+    {
+        let (remove, subs) = store.get_subscriptions();
+        assert_eq!(0, remove.len());
+        assert_eq!(0, subs.len());
+    }
+
+    let sub = store.subscribe(Box::new(|_, _| {}));
+    {
+        let (remove, subs) = store.get_subscriptions();
+        assert_eq!(0, remove.len());
+        assert_eq!(1, subs.len());
+    }
+
+    sub.cancel();
+    {
+        let (remove, subs) = store.get_subscriptions();
+        assert_eq!(1, remove.len());
+        assert_eq!(0, subs.len());
+    }
+}
+
+#[test]
+fn try_remove_subscriptions_easy_lock() {
+    let store : Store<usize> = Store::new(vec![]);
+    let sub = store.subscribe(Box::new(|_, _| {}));
+    sub.cancel();
+
+    let (remove, _) = store.get_subscriptions();
+    store.try_to_remove_subscriptions(remove);
+    let (_, subs) = store.get_subscriptions();
+    assert_eq!(0, subs.len());
+}
+
+#[test]
+fn try_remove_subscriptions_no_lock() {
+    let store : Store<usize> = Store::new(vec![]);
+    let sub = store.subscribe(Box::new(|_, _| {}));
+    sub.cancel();
+
+    let (remove, _) = store.get_subscriptions();
+    {
+        let subscriptions = store.subscriptions.write().unwrap();
+        store.try_to_remove_subscriptions(remove);
+    }
+    assert_eq!(1, store.subscriptions.read().unwrap().len());
 }
