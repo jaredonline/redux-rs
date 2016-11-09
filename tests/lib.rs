@@ -1,6 +1,6 @@
 extern crate redux;
 
-use redux::{Reducer, Store, Middleware};
+use redux::{Reducer, Store, Middleware, DispatchFunc};
 
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
@@ -60,7 +60,7 @@ impl Reducer for TodoStore {
     type Action = TodoAction;
     type Error = String;
     
-    fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
+    fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
         match action {
             TodoAction::NewTodo { name } => {
                 let todo = Todo { name: name, id: self.ticket(), };
@@ -69,7 +69,7 @@ impl Reducer for TodoStore {
             // _ => {}
         }
 
-        Ok(self)
+        Ok(self.clone())
     }
 }
 
@@ -170,14 +170,14 @@ impl Counter {
     }
 }
 impl Middleware<TodoStore> for Counter {
-    fn before(&self, _: &Store<TodoStore>, _: TodoAction) {
+    fn dispatch(&self, store: &Store<TodoStore>, action: TodoAction, next: &DispatchFunc<TodoStore>) -> Result<TodoStore, String> {
         let mut count = self.before_count.lock().unwrap();
         *count += 1;
-    }
-
-    fn after(&self, _: &Store<TodoStore>, _: TodoAction) {
+        let result = next(store, action);
         let mut count = self.after_count.lock().unwrap();
         *count += 2;
+
+        result
     }
 }
 

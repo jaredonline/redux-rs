@@ -37,8 +37,8 @@ use std::fmt::Display;
 ///     type Action = String;
 ///     type Error = String;
 ///
-///     fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
-///         Ok(self)
+///     fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
+///         Ok(self.clone())
 ///     }
 /// }
 ///
@@ -56,7 +56,13 @@ pub trait Reducer: Clone + Default {
     /// Reduce a given state based upon an action. This won't be called externally
     /// because your application will never have a reference to the state object
     /// directly. Instead, it'll be called with you call `store.dispatch`.
-    fn reduce(&mut self, Self::Action) -> Result<&mut Self, Self::Error>;
+    fn reduce(&mut self, Self::Action) -> Result<Self, Self::Error>;
+}
+
+fn build_next<T: 'static + Reducer>(next: DispatchFunc<T>, middleware: Box<Middleware<T>>) -> DispatchFunc<T> {
+    Box::new(move |store, action| {
+        middleware.dispatch(store, action, &next)
+    })
 }
 
 /// The `Store` is the main access point for your application. As soon as you
@@ -106,7 +112,7 @@ pub trait Reducer: Clone + Default {
 /// 	type Action = TodoAction;
 /// 	type Error = String;
 /// 
-/// 	fn reduce(&mut self, action: Self::Action) -> Result<&mut Self, Self::Error> {
+/// 	fn reduce(&mut self, action: Self::Action) -> Result<Self, Self::Error> {
 /// 		match action {
 ///             TodoAction::Insert(name) => {
 ///                 let todo = Todo { name: name, };
@@ -114,7 +120,7 @@ pub trait Reducer: Clone + Default {
 ///             },
 /// 		}
 /// 
-///         Ok(self)
+///         Ok(self.clone())
 /// 	}
 /// }
 /// 
@@ -127,9 +133,9 @@ pub trait Reducer: Clone + Default {
 /// }
 /// ```
 pub struct Store<T: Reducer> {
-    internal_store: Mutex<InternalStore<T>>,
+    internal_store: Arc<Mutex<InternalStore<T>>>,
     subscriptions: Arc<RwLock<Vec<Arc<Subscription<T>>>>>,
-    middlewares: Vec<Box<Middleware<T>>>,
+    dispatch_chain: DispatchFunc<T>,
 }
 
 // Would love to get rid of these someday
@@ -140,41 +146,39 @@ impl<T: 'static + Reducer> Store<T> {
     /// Initialize a new `Store`. 
     pub fn new(middlewares: Vec<Box<Middleware<T>>>) -> Store<T> {
         let initial_data = T::default();
+        let internal = Arc::new(Mutex::new(InternalStore {
+            data: initial_data,
+            is_dispatching: false,
+        }));
+        let is = internal.clone();
+        let mut next : DispatchFunc<T> = Box::new(move |_, action| {
+            match is.try_lock() {
+                Ok(mut guard) => {
+                    guard.dispatch(action.clone())
+                },
+                Err(_) => {
+                    Err(String::from("Can't dispatch during a reduce. The internal data is locked."))
+                }
+            }
+        });
+        for middleware in middlewares {
+            next = build_next(next, middleware);
+        }
 
         Store {
-            internal_store: Mutex::new(InternalStore {
-                data: initial_data,
-                is_dispatching: false,
-            }),
+            internal_store: internal,
             subscriptions: Arc::new(RwLock::new(Vec::new())),
-            middlewares: middlewares,
+            dispatch_chain: next,
         }
     }
 
     /// Dispatch an event to the stores, returning an `Result`. Only one dispatch
     /// can be happening at a time.
     pub fn dispatch(&self, action: T::Action) -> Result<T::Action, String> {
-        for middleware in &self.middlewares {
-            middleware.before(&self, action.clone());
-        }
-        match self.internal_store.try_lock() {
-            Ok(mut guard) => {
-                match guard.dispatch(action.clone()) {
-                    Err(e) => {
-                        return Err(format!("Error during dispatch: {}", e));
-                    },
-                    _ => {}
-                }
-            },
-            Err(_) => {
-                return Err(String::from("Can't dispatch during a reduce. The internal data is locked."));
-            }
-        }
-        // Weird looping to go backwards so that we emulate Redux.js way of handling
-        // middleware: wrap down the chain of middlewares, then back up.
-        for i in (0 .. self.middlewares.len()).into_iter().rev() {
-            let middleware = &self.middlewares[i];
-            middleware.after(&self, action.clone());
+        let ref dispatch = self.dispatch_chain;
+        match dispatch(&self, action.clone()) {
+            Err(e) => return Err(format!("Error during dispatch: {}", e)),
+            _ => {}
         }
 
         // snapshot the active subscriptions here before calling them. This both
@@ -223,8 +227,8 @@ impl<T: 'static + Reducer> Store<T> {
     /// #     type Action = usize;
     /// #     type Error = String;
     /// #     
-    /// #     fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
-    /// #         Ok(self)
+    /// #     fn reduce(&mut self, _: Self::Action) -> Result<Self, Self::Error> {
+    /// #         Ok(self.clone())
     /// #     }
     /// # }
     /// #
@@ -293,7 +297,7 @@ struct InternalStore<T: Reducer> {
 }
 
 impl<T: Reducer> InternalStore<T> {
-    fn dispatch(&mut self, action: T::Action) -> Result<T::Action, String> {
+    fn dispatch(&mut self, action: T::Action) -> Result<T, String> {
         if self.is_dispatching {
             return Err(String::from("Can't dispatch during a reduce."));
         }
@@ -307,7 +311,7 @@ impl<T: Reducer> InternalStore<T> {
         }
         self.is_dispatching = false;
 
-        Ok(action)
+        Ok(self.data.clone())
     }
 }
 
@@ -346,6 +350,8 @@ impl<T: Reducer> Subscription<T> {
     }
 }
 
+pub type DispatchFunc<T: Reducer> = Box<Fn(&Store<T>, T::Action) -> Result<T, String>>;
+
 /// A decent approximation of a redux-js middleware wrapper. This lets you have
 /// wrap calls to dispatch, performing actions right before and right after a
 /// call. Each call to dispatch in a Store will loop the middlewares, calling
@@ -356,7 +362,7 @@ impl<T: Reducer> Subscription<T> {
 ///
 /// ```
 /// # #[allow(dead_code)]
-/// # use redux::{Store, Reducer, Middleware};
+/// # use redux::{Store, Reducer, Middleware, DispatchFunc};
 /// #
 /// # #[derive(Clone, Debug)]
 /// # enum FooAction {}
@@ -367,20 +373,20 @@ impl<T: Reducer> Subscription<T> {
 /// #   type Action = FooAction;
 /// #   type Error = String;
 /// #
-/// #   fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
-/// #       Ok(self)
+/// #   fn reduce(&mut self, _: Self::Action) -> Result<Self, Self::Error> {
+/// #       Ok(self.clone())
 /// #   }
 /// # }
 ///
 /// struct Logger{}
 /// impl Middleware<Foo> for Logger {
-///     fn before(&self, store: &Store<Foo>, action: FooAction) {
+///     fn dispatch(&self, store: &Store<Foo>, action: FooAction, next: &DispatchFunc<Foo>) -> Result<Foo, String> {
 ///         println!("Called action: {:?}", action);
 ///         println!("State before action: {:?}", store.get_state());
-///     }
-///
-///     fn after(&self, store: &Store<Foo>, _: FooAction) {
+///         let result = next(store, action);
 ///         println!("State after action: {:?}", store.get_state());
+///
+///         result
 ///     }
 /// }
 ///
@@ -388,8 +394,7 @@ impl<T: Reducer> Subscription<T> {
 /// let store : Store<Foo> = Store::new(vec![logger]);
 /// ```
 pub trait Middleware<T: Reducer> {
-    fn before(&self, store: &Store<T>, action: T::Action);
-    fn after(&self, store: &Store<T>, action: T::Action);
+    fn dispatch(&self, store: &Store<T>, action: T::Action, next: &DispatchFunc<T>) -> Result<T, String>;
 }
 
 #[cfg(test)]
@@ -397,8 +402,8 @@ impl Reducer for usize {
     type Action = usize;
     type Error = String;
 
-    fn reduce(&mut self, _: Self::Action) -> Result<&mut Self, Self::Error> {
-        Ok(self)
+    fn reduce(&mut self, _: Self::Action) -> Result<Self, Self::Error> {
+        Ok(self.clone())
     }
 }
 
